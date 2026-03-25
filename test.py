@@ -19,7 +19,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, CommandHan
 
 TOKEN = os.getenv("TOKEN")
 
-ADMIN_IDS = [123456789, 111111111, 222222222, 333333333]
+ADMIN_IDS = [419163029, 111111111, 222222222, 333333333]
 ALLOWED_CHAT_ID = -1001234567890
 
 DATA_FILE = "data.json"
