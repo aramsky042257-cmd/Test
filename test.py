@@ -17,7 +17,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, CommandHan
 # 📌 설정
 # ==============================
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("8696444829:AAFtF11zvHF_kNM1P9XTufw-iI9ofXD3_0o")
 
 ADMIN_IDS = [419163029, 111111111, 222222222, 333333333]
 ALLOWED_CHAT_ID = -1001234567890
