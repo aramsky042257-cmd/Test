@@ -21,6 +21,7 @@ TEAM_LEADERS = {
 } #실제 조장 텔레그램 ID 넣기
 
 # --- 일반 유저 명령어 ---
+# ===== register =====
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -32,13 +33,23 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         team = int(context.args[0])
         name = context.args[1]
+        region = context.args[2]  # 🔥 지역 추가
     except (IndexError, ValueError):
-        await update.message.reply_text("사용법: /register 1 홍길동")
+        await update.message.reply_text("사용법: /register 1 홍길동 강남")
         return
+
+    # 🔥 날짜 / 요일 자동 생성
+    from datetime import datetime
+    now = datetime.now()
+    date = now.strftime("%Y-%m-%d")
+    weekday = ["월","화","수","목","금","토","일"][now.weekday()]
 
     user_data[user_id] = {
         'team': team,
         'name': name,
+        '지역': region,
+        '날짜': date,
+        '요일': weekday,
         '말하기': 0,
         '쓰기': 0,
         '읽기': 0,
@@ -150,71 +161,44 @@ async def myrecord(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def teamrecord(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_id_str = str(user_id)
 
-    # ❌ 등록 안 한 사람 방지
-    if user_id_str not in user_data:
+    # 🔥 타입 맞춤 (int 그대로 사용)
+    if user_id not in user_data:
         await update.message.reply_text("/register 먼저 해주세요!")
         return
 
-    # 🔥 관리자 여부 확인
     is_admin = user_id in ADMIN_IDS
+    user_team = user_data[user_id]['team']
 
-    # 🔥 유저의 조
-    user_team = user_data[user_id_str]['team']
-
-    # 📊 출력 시작
     msg = "📊 조별 통계\n\n"
 
-    # =========================
-    # 👑 관리자: 전체 조 보기
-    # =========================
+    # 👑 관리자
     if is_admin:
         teams = {}
 
-        # 조별로 묶기
         for data in user_data.values():
             team = data['team']
+            teams.setdefault(team, []).append(data)
 
-            if team not in teams:
-                teams[team] = []
-
-            teams[team].append(data)
-
-        # 출력
         for team, members in teams.items():
             msg += f"{team}조\n"
-
             for m in members:
                 msg += (
                     f"  {m['name']} - "
-                    f"말하기: {m['말하기']} / "
-                    f"쓰기: {m['쓰기']} / "
-                    f"읽기: {m['읽기']} / "
-                    f"강의: {m['강의하기']}\n"
+                    f"{m['말하기']}/{m['쓰기']}/{m['읽기']}/{m['강의하기']}\n"
                 )
-
             msg += "\n"
 
-    # =========================
-    # 👑 조장: 자기 조만 보기
-    # =========================
+    # 👑 조장
     elif TEAM_LEADERS.get(user_team) == user_id:
         msg += f"{user_team}조\n"
-
         for data in user_data.values():
             if data['team'] == user_team:
                 msg += (
                     f"  {data['name']} - "
-                    f"말하기: {data['말하기']} / "
-                    f"쓰기: {data['쓰기']} / "
-                    f"읽기: {data['읽기']} / "
-                    f"강의: {data['강의하기']}\n"
+                    f"{data['말하기']}/{data['쓰기']}/{data['읽기']}/{data['강의하기']}\n"
                 )
 
-    # =========================
-    # ❌ 일반 유저
-    # =========================
     else:
         await update.message.reply_text("조장만 조회 가능합니다!")
         return
@@ -232,51 +216,30 @@ async def weeklystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     stats = {}
 
-    # 🔁 전체 유저 데이터 순회
+    # 🔁 데이터 정리
     for data in user_data.values():
-        date = data['날짜']
-        day = data['요일']
-        region = data['지역']
+        key = f"{data.get('날짜','-')} | {data.get('요일','-')} | {data.get('지역','-')}"
         team = data['team']
-        name = data['name']
 
-        # 🔥 1단계: 날짜+요일+지역
-        key = f"{date} | {day} | {region}"
+        stats.setdefault(key, {})
+        stats[key].setdefault(team, [])
 
-        if key not in stats:
-            stats[key] = {}
-
-        # 🔥 2단계: 조
-        if team not in stats[key]:
-            stats[key][team] = {}
-
-        # 🔥 3단계: 유저
-        stats[key][team][name] = {
-            '말하기': data['말하기'],
-            '쓰기': data['쓰기'],
-            '읽기': data['읽기'],
-            '강의하기': data['강의하기']
-        }
+        stats[key][team].append(data)
 
     # 📊 출력
     msg = "📊 주간 상세 통계\n\n"
 
     for key, teams in stats.items():
-        msg += f"{key}\n\n"
+        msg += f"📅 {key}\n"
 
-        for team, users in teams.items():
-            msg += f"  {team}조\n"
+        for team, members in teams.items():
+            msg += f"  👥 {team}조\n"
 
-            for name, s in users.items():
+            for m in members:
                 msg += (
-                    f"    {name} - "
-                    f"말하기: {s['말하기']} / "
-                    f"쓰기: {s['쓰기']} / "
-                    f"읽기: {s['읽기']} / "
-                    f"강의: {s['강의하기']}\n"
+                    f"    - {m['name']}\n"
+                    f"      말:{m['말하기']} 쓰:{m['쓰기']} 읽:{m['읽기']} 강:{m['강의하기']}\n"
                 )
-
-            msg += "\n"
 
         msg += "\n"
 
