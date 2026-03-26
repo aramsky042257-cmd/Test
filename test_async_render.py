@@ -36,10 +36,6 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"{team}조 {name} 등록 완료!")
 
-if user_id not in user_data or 'team' not in user_data[user_id]:
-    await update.message.reply_text("/register 먼저 해주세요!")
-    return
-
 async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
