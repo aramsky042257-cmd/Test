@@ -17,14 +17,18 @@ ADMIN_IDS = [419163029, 87654321]  # 실제 관리자 텔레그램 ID 넣기
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
+    # 🔥 이미 등록된 경우
+    if user_id in user_data:
+        await update.message.reply_text("이미 등록되어 있습니다!")
+        return
+
     try:
-        team = int(context.args[0])  # 조 번호
-        name = context.args[1]       # 이름
+        team = int(context.args[0])
+        name = context.args[1]
     except (IndexError, ValueError):
         await update.message.reply_text("사용법: /register 1 홍길동")
         return
 
-    # 데이터 저장
     user_data[user_id] = {
         'team': team,
         'name': name,
