@@ -1,0 +1,11 @@
+
+# Google Cloud Service Account
+credentials.json
+
+# Python 관련
+__pycache__/
+*.pyc
+*.pyo
+
+# 환경변수 파일
+.env
