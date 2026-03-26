@@ -7,6 +7,22 @@
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# ===== 🔥 구글 시트 연결 =====
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+scope = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
+
+# 🔥 credentials.json 파일 필요 (다운로드 받은 것)
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(creds)
+
+# 🔥 시트 이름 (네가 만든 시트 이름)
+sheet = client.open("출석봇").sheet1
+
 # --- 사용자 기록 저장용 딕셔너리 예시 ---
 user_data = {}  # {user_id: {'말하기':0, '쓰기':0, '읽기':0, '강의하기':0}}
 
@@ -19,6 +35,51 @@ TEAM_LEADERS = {
     2: 222222222,
     4: 419163029
 } #실제 조장 텔레그램 ID 넣기
+
+# ===== 🔥 시트 저장 함수 =====
+def save_to_sheet(user_id, data):
+    sheet.append_row([
+        user_id,
+        data['team'],
+        data['name'],
+        data['지역'],
+        data['날짜'],
+        data['요일'],
+        data['말하기'],
+        data['쓰기'],
+        data['읽기'],
+        data['강의하기']
+    ])
+
+# ===== 🔥 시트에서 유저 행 찾기 =====
+def find_user_row(user_id):
+    records = sheet.get_all_values()
+
+    for i, row in enumerate(records):
+        if str(row[0]) == str(user_id):  # user_id는 A열
+            return i + 1  # 시트는 1부터 시작
+
+    return None
+
+
+# ===== 🔥 시트 업데이트 =====
+def update_sheet(user_id, data):
+    row = find_user_row(user_id)
+
+    if not row:
+        return  # 없으면 무시 (안전)
+
+    sheet.update(f"B{row}:J{row}", [[
+        data['team'],
+        data['name'],
+        data['지역'],
+        data['날짜'],
+        data['요일'],
+        data['말하기'],
+        data['쓰기'],
+        data['읽기'],
+        data['강의하기']
+    ]])
 
 # --- 일반 유저 명령어 ---
 # ===== register =====
@@ -55,6 +116,8 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         '읽기': 0,
         '강의하기': 0
     }
+    # 🔥 시트 저장 추가
+    save_to_sheet(user_id, user_data[user_id])
 
     await update.message.reply_text(f"{team}조 {name} 등록 완료!")
 
@@ -72,6 +135,8 @@ async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_data[user_id]['말하기'] += count
+    # 🔥 시트 업데이트 추가
+    update_sheet(user_id, user_data[user_id])
 
     team = user_data[user_id]['team']
     name = user_data[user_id]['name']
@@ -92,6 +157,8 @@ async def write(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_data[user_id]['쓰기'] += count
+    # 🔥 시트 업데이트 추가
+    update_sheet(user_id, user_data[user_id])
 
     team = user_data[user_id]['team']
     name = user_data[user_id]['name']
@@ -112,6 +179,8 @@ async def read(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_data[user_id]['읽기'] += count
+    # 🔥 시트 업데이트 추가
+    update_sheet(user_id, user_data[user_id])
 
     team = user_data[user_id]['team']
     name = user_data[user_id]['name']
@@ -132,6 +201,8 @@ async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_data[user_id]['강의하기'] += count
+    # 🔥 시트 업데이트 추가
+    update_sheet(user_id, user_data[user_id])
 
     team = user_data[user_id]['team']
     name = user_data[user_id]['name']
