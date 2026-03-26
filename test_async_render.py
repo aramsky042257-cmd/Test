@@ -59,7 +59,6 @@ async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def write(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # 등록 안 한 사람 방지
     if user_id not in user_data:
         await update.message.reply_text("/register 먼저 해주세요!")
         return
@@ -67,7 +66,7 @@ async def write(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         count = int(context.args[0])
     except (IndexError, ValueError):
-        await update.message.reply_text("사용법: /write 1")
+        await update.message.reply_text("사용법: /write 2")
         return
 
     user_data[user_id]['쓰기'] += count
@@ -80,7 +79,6 @@ async def write(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def read(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # 등록 안 한 사람 방지
     if user_id not in user_data:
         await update.message.reply_text("/register 먼저 해주세요!")
         return
@@ -88,7 +86,7 @@ async def read(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         count = int(context.args[0])
     except (IndexError, ValueError):
-        await update.message.reply_text("사용법: /read 1")
+        await update.message.reply_text("사용법: /read 2")
         return
 
     user_data[user_id]['읽기'] += count
@@ -101,7 +99,6 @@ async def read(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # 등록 안 한 사람 방지
     if user_id not in user_data:
         await update.message.reply_text("/register 먼저 해주세요!")
         return
@@ -117,7 +114,7 @@ async def lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
     team = user_data[user_id]['team']
     name = user_data[user_id]['name']
 
-    await update.message.reply_text(f"{team}조 {name} 강의하기 +{count}")
+    await update.message.reply_text(f"{team}조 {name} 강의 +{count}")
 
 async def myrecord(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
