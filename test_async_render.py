@@ -11,7 +11,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 user_data = {}  # {user_id: {'말하기':0, '쓰기':0, '읽기':0, '강의하기':0}}
 
 # --- 관리자 ID 리스트 ---
-ADMIN_IDS = [12345678, 87654321]  # 실제 관리자 텔레그램 ID 넣기
+ADMIN_IDS = [419163029, 87654321]  # 실제 관리자 텔레그램 ID 넣기
 
 # --- 일반 유저 명령어 ---
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,7 +93,7 @@ async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("봇 응답 정상!")
 
 # --- Application 생성 및 핸들러 등록 ---
-app = ApplicationBuilder().token("여기에_토큰").build()
+app = ApplicationBuilder().token("8696444829:AAFtF11zvHF_kNM1P9XTufw-iI9ofXD3_0o").build()
 
 # 일반 유저 명령어
 app.add_handler(CommandHandler("register", register))
