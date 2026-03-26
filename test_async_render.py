@@ -139,67 +139,139 @@ async def myrecord(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg)
 
+# 📊 조별 통계 (관리자 전체 / 조장 자기 조)
+
+async def teamrecord(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_id_str = str(user_id)
+
+    # ❌ 등록 안 한 사람 방지
+    if user_id_str not in user_data:
+        await update.message.reply_text("/register 먼저 해주세요!")
+        return
+
+    # 🔥 관리자 여부 확인
+    is_admin = user_id in ADMIN_IDS
+
+    # 🔥 유저의 조
+    user_team = user_data[user_id_str]['team']
+
+    # 📊 출력 시작
+    msg = "📊 조별 통계\n\n"
+
+    # =========================
+    # 👑 관리자: 전체 조 보기
+    # =========================
+    if is_admin:
+        teams = {}
+
+        # 조별로 묶기
+        for data in user_data.values():
+            team = data['team']
+
+            if team not in teams:
+                teams[team] = []
+
+            teams[team].append(data)
+
+        # 출력
+        for team, members in teams.items():
+            msg += f"{team}조\n"
+
+            for m in members:
+                msg += (
+                    f"  {m['name']} - "
+                    f"말하기: {m['말하기']} / "
+                    f"쓰기: {m['쓰기']} / "
+                    f"읽기: {m['읽기']} / "
+                    f"강의: {m['강의하기']}\n"
+                )
+
+            msg += "\n"
+
+    # =========================
+    # 👑 조장: 자기 조만 보기
+    # =========================
+    elif TEAM_LEADERS.get(user_team) == user_id:
+        msg += f"{user_team}조\n"
+
+        for data in user_data.values():
+            if data['team'] == user_team:
+                msg += (
+                    f"  {data['name']} - "
+                    f"말하기: {data['말하기']} / "
+                    f"쓰기: {data['쓰기']} / "
+                    f"읽기: {data['읽기']} / "
+                    f"강의: {data['강의하기']}\n"
+                )
+
+    # =========================
+    # ❌ 일반 유저
+    # =========================
+    else:
+        await update.message.reply_text("조장만 조회 가능합니다!")
+        return
+
+    await update.message.reply_text(msg)
+    
 # --- 관리자 명령어 ---
-async def allrecords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def weeklystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
+    # 🔐 관리자 체크
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("관리자만 사용 가능")
         return
 
-    team_stats = {}
+    stats = {}
 
-    # 1️⃣ 유저 데이터 정리
-    for uid, data in user_data.items():
-        team = data.get('team')
-        name = data.get('name')
+    # 🔁 전체 유저 데이터 순회
+    for data in user_data.values():
+        date = data['날짜']
+        day = data['요일']
+        region = data['지역']
+        team = data['team']
+        name = data['name']
 
-        if team not in team_stats:
-            team_stats[team] = {
-                'members': [],
-                '합계': {'말하기': 0, '쓰기': 0, '읽기': 0, '강의하기': 0}
-            }
+        # 🔥 1단계: 날짜+요일+지역
+        key = f"{date} | {day} | {region}"
 
-        # 개인 기록 추가
-        team_stats[team]['members'].append({
-            'name': name,
+        if key not in stats:
+            stats[key] = {}
+
+        # 🔥 2단계: 조
+        if team not in stats[key]:
+            stats[key][team] = {}
+
+        # 🔥 3단계: 유저
+        stats[key][team][name] = {
             '말하기': data['말하기'],
             '쓰기': data['쓰기'],
             '읽기': data['읽기'],
             '강의하기': data['강의하기']
-        })
+        }
 
-        # 합계 계산
-        team_stats[team]['합계']['말하기'] += data['말하기']
-        team_stats[team]['합계']['쓰기'] += data['쓰기']
-        team_stats[team]['합계']['읽기'] += data['읽기']
-        team_stats[team]['합계']['강의하기'] += data['강의하기']
+    # 📊 출력
+    msg = "📊 주간 상세 통계\n\n"
 
-    # 2️⃣ 메시지 만들기
-    msg = "📊 조별 통계\n\n"
+    for key, teams in stats.items():
+        msg += f"{key}\n\n"
 
-    for team, info in sorted(team_stats.items()):
-        msg += f"{team}조\n"
+        for team, users in teams.items():
+            msg += f"  {team}조\n"
 
-        # 개인별 출력
-        for member in info['members']:
-            msg += (
-                f"{member['name']}: "
-                f"말하기 {member['말하기']} / "
-                f"쓰기 {member['쓰기']} / "
-                f"읽기 {member['읽기']} / "
-                f"강의 {member['강의하기']}\n"
-            )
+            for name, s in users.items():
+                msg += (
+                    f"    {name} - "
+                    f"말하기: {s['말하기']} / "
+                    f"쓰기: {s['쓰기']} / "
+                    f"읽기: {s['읽기']} / "
+                    f"강의: {s['강의하기']}\n"
+                )
 
-        # 합계 출력
-        total = info['합계']
-        msg += (
-            f"👉 합계\n"
-            f"말하기: {total['말하기']} / "
-            f"쓰기: {total['쓰기']} / "
-            f"읽기: {total['읽기']} / "
-            f"강의: {total['강의하기']}\n\n"
-        )
+            msg += "\n"
+
+        msg += "\n"
 
     await update.message.reply_text(msg)
 
@@ -227,7 +299,8 @@ app.add_handler(CommandHandler("lecture", lecture))
 app.add_handler(CommandHandler("myrecord", myrecord))
 
 # 관리자 명령어
-app.add_handler(CommandHandler("allrecords", allrecords))
+app.add_handler(CommandHandler("teamrecord", teamrecord))
+app.add_handler(CommandHandler("weeklystats", weeklystats))
 app.add_handler(CommandHandler("reset", reset))
 
 # 테스트
