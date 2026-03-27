@@ -1,5 +1,0 @@
-
-python-telegram-bot
-openpyxl
-gspread
-oauth2client
