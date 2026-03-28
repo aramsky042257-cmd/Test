@@ -1,0 +1,8 @@
+.env
+credentials.json
+secrets.json
+*.log
+__pycache__/
+*.pyc
+.vscode/
+.idea/
