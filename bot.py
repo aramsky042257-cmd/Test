@@ -1,8 +1,8 @@
 # ==============================
-# 📌 Telegram Study Bot (Termux 호환 버전)
+# 📌 Telegram Study Bot (Termux 최적화 버전)
 # ==============================
 
-import json, os, asyncio
+import os, json, asyncio
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
@@ -19,10 +19,10 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS","").split(",") if x]
 LEADER_IDS = [int(x) for x in os.getenv("LEADER_IDS","").split(",") if x]
 ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
-DATA_FILE = "data.json"
+DATA_FILE = os.path.join(os.getcwd(), "data.json")
 
 # ==============================
-# 데이터 함수 & 유틸
+# 기본 데이터 함수
 # ==============================
 def load_data():
     try:
@@ -56,7 +56,7 @@ def get_week_key():
     return f"{year}-{month:02d} {week}주"
 
 # ==============================
-# 봇 핸들러
+# 시작 / 버튼 UI
 # ==============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["온라인 입력", "대면 입력"]]
@@ -70,6 +70,9 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "대면 입력":
         await update.message.reply_text("대면 입력입니다\n예시: f 10/2/1/0")
 
+# ==============================
+# 유저 등록
+# ==============================
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
     try:
@@ -91,6 +94,9 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data(data)
     await update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
 
+# ==============================
+# 기록 입력
+# ==============================
 async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
     uid = str(update.message.from_user.id)
@@ -116,6 +122,9 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     label = "온라인" if mode=="o" else "대면"
     await update.message.reply_text(f"✅ 저장 완료 ({label})")
 
+# ==============================
+# 조장 조회
+# ==============================
 async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in LEADER_IDS: return
     if not is_allowed(update): return
@@ -137,6 +146,9 @@ async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "\n"
     await update.message.reply_text(msg)
 
+# ==============================
+# 관리자 전체 조회
+# ==============================
 async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS: return
     if not is_allowed(update): return
@@ -162,10 +174,10 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ==============================
-# 엑셀 관련 함수 (동일)
+# 엑셀 관련 함수
 # ==============================
-# ... create_weekly_table_excel(), create_weekly_chart_excel(), save_weekly_summary() 그대로 사용 ...
-
+# (함수 내용 그대로 유지)
+# create_weekly_table_excel(), create_weekly_chart_excel(), save_weekly_summary()
 # ==============================
 # 리포트
 # ==============================
@@ -187,12 +199,11 @@ async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(file)
 
 # ==============================
-# 스케줄러 시작
+# 스케줄러 시작 함수
 # ==============================
 scheduler = AsyncIOScheduler()
 
-async def start_scheduler(app):
-    # 봇 루프 안에서 직접 시작
+def start_scheduler(app):
     scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)), "cron", day_of_week="sun", hour=23)
     scheduler.start()
 
@@ -212,13 +223,10 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT, handle_button))
 
     # 스케줄러 시작
-    await start_scheduler(app)
+    start_scheduler(app)
 
-    # 봇 실행
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await app.updater.idle()
+    # 봇 실행 (폴링)
+    await app.run_polling()
 
 if __name__=="__main__":
     asyncio.run(main())
