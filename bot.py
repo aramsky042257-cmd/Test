@@ -1,12 +1,13 @@
 # ==============================
-# 📌 Telegram Study Bot (완전체 + APScheduler 안전 적용)
+# 📌 Telegram Study Bot (완전체 + UX + 안전 스케줄러)
 # ==============================
 
-import json, os
+import json, os, asyncio
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
+
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,7 +23,7 @@ ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
 DATA_FILE = "data.json"
 
 # ==============================
-# 데이터 로드/저장
+# 기본 데이터 함수
 # ==============================
 def load_data():
     try:
@@ -41,10 +42,8 @@ def is_allowed(update):
 def get_day():
     return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][datetime.now().weekday()]
 
-# ==============================
-# 주차 계산 (일요일 기준)
-# ==============================
 def get_week_key():
+    """월 기준, 일요일 시작 주차"""
     now = datetime.now()
     year, month = now.year, now.month
     first_day = datetime(year, month, 1)
@@ -62,15 +61,15 @@ def get_week_key():
 # 시작 / 버튼 UI
 # ==============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["온라인 입력","대면 입력"]]
+    keyboard = [["온라인 입력", "대면 입력"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("입력 버튼입니다", reply_markup=reply_markup)
 
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if text=="온라인 입력":
+    if text == "온라인 입력":
         await update.message.reply_text("온라인 입력입니다\n예시: o 10/2/1/0")
-    elif text=="대면 입력":
+    elif text == "대면 입력":
         await update.message.reply_text("대면 입력입니다\n예시: f 10/2/1/0")
 
 # ==============================
@@ -88,6 +87,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("/register 1 홍길동")
             return
+
     uid = str(update.message.from_user.id)
     data = load_data()
     data.setdefault("users", {})
@@ -104,23 +104,26 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
     uid = str(update.message.from_user.id)
     data = load_data()
+
     if uid not in data.get("users", {}):
         await update.message.reply_text("먼저 /register 조 이름 입력해주세요")
         return
+
     try:
         mode, val = update.message.text.split(" ",1)
         values = list(map(int, val.split("/")))
-        if len(values)!=4: raise Exception
+        if len(values) != 4: raise Exception
     except:
         await update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
         return
+
     cats = ["말하기","쓰기","읽기","강의"]
     day = get_day()
     data.setdefault("records", {})
     data["records"].setdefault(uid, {})
     data["records"][uid].setdefault(day, {})
     key = "online" if mode=="o" else "offline"
-    data["records"][uid][day][key] = dict(zip(cats,values))
+    data["records"][uid][day][key] = dict(zip(cats, values))
     save_data(data)
     label = "온라인" if mode=="o" else "대면"
     await update.message.reply_text(f"✅ 저장 완료 ({label})")
@@ -177,18 +180,18 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ==============================
-# 주간 표 엑셀
+# 주간 엑셀 테이블
 # ==============================
 def create_weekly_table_excel():
     data = load_data()
     days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
     wb = Workbook()
     ws = wb.active
-    ws.append(["조","이름"]+days)
+    ws.append(["조","이름"] + days)
     for uid, team in data.get("users", {}).items():
         name = data["names"][uid]
         recs = data.get("records", {}).get(uid, {})
-        row = [team,name]
+        row = [team, name]
         for d in days:
             r = recs.get(d)
             if r:
@@ -206,43 +209,43 @@ def create_weekly_table_excel():
     return file
 
 # ==============================
-# 그래프 엑셀
+# 주간 그래프
 # ==============================
 def create_weekly_chart_excel():
     data = load_data()
     wb = Workbook()
     ws = wb.active
     ws.append(["주차","총합","온라인","대면"])
-    weekly = data.get("weekly_stats",{})
+    weekly = data.get("weekly_stats", {})
     for w in sorted(weekly):
         ws.append([w, weekly[w]["total"], weekly[w]["online"], weekly[w]["offline"]])
     chart = LineChart()
-    data_ref = Reference(ws,min_col=2,min_row=1,max_row=len(weekly)+1)
-    cats = Reference(ws,min_col=1,min_row=2,max_row=len(weekly)+1)
+    data_ref = Reference(ws, min_col=2, min_row=1, max_row=len(weekly)+1)
+    cats = Reference(ws, min_col=1, min_row=2, max_row=len(weekly)+1)
     chart.add_data(data_ref, titles_from_data=True)
     chart.set_categories(cats)
-    ws.add_chart(chart,"E2")
+    ws.add_chart(chart, "E2")
     file="weekly_chart.xlsx"
     wb.save(file)
     return file
 
 # ==============================
-# 주간 요약 저장
+# 주간 요약
 # ==============================
 def save_weekly_summary():
     data = load_data()
     key = get_week_key()
-    total=online=offline=0
-    for uid,recs in data.get("records",{}).items():
-        for d,val in recs.items():
+    total = online = offline = 0
+    for uid, recs in data.get("records", {}).items():
+        for d, val in recs.items():
             for typ in ["online","offline"]:
                 if typ in val:
                     for k in ["말하기","쓰기","읽기","강의"]:
-                        total+=val[typ][k]
+                        total += val[typ][k]
                         if typ=="online": online+=val[typ][k]
                         else: offline+=val[typ][k]
     data.setdefault("weekly_stats",{})
-    data["weekly_stats"][key]={"total":total,"online":online,"offline":offline}
+    data["weekly_stats"][key] = {"total":total,"online":online,"offline":offline}
     save_data(data)
 
 # ==============================
@@ -269,27 +272,27 @@ async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(file)
 
 # ==============================
-# 실행 및 스케줄러
+# 메인 실행
 # ==============================
-if __name__=="__main__":
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Command 핸들러
+    # 핸들러
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("register", register))
     app.add_handler(CommandHandler("teamstats", team_stats))
     app.add_handler(CommandHandler("allview", all_view))
     app.add_handler(CommandHandler("weeklychart", weekly_chart))
-
-    # 메시지 핸들러
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
     app.add_handler(MessageHandler(filters.TEXT, handle_button))
 
-    # APScheduler 안전 적용
+    # 스케줄러 (AsyncIOScheduler + 이벤트 루프 내 시작)
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(lambda: app.create_task(send_weekly_report(app)),
+    scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)),
                       "cron", day_of_week="sun", hour=23)
     scheduler.start()
 
-    # 봇 실행
-    app.run_polling()
+    await app.run_polling()
+
+if __name__=="__main__":
+    asyncio.run(main())
