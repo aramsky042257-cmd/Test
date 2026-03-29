@@ -1,10 +1,13 @@
+# ==============================
+# 📌 Telegram Study Bot (Termux 최적화 버전)
+# ==============================
+
 import os, json
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from dotenv import load_dotenv
 from openpyxl import Workbook
-from openpyxl.chart import LineChart, Reference
 
 # ==============================
 # 환경 변수
@@ -15,10 +18,10 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS","").split(",") if x]
 LEADER_IDS = [int(x) for x in os.getenv("LEADER_IDS","").split(",") if x]
 ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
 DATA_FILE = os.path.join(os.getcwd(), "data.json")
-NAME_FILE = os.path.join(os.getcwd(), "names_daily.json")  # 하루치 이름 리스트
+NAMES_FILE = os.path.join(os.getcwd(), "names.xlsx")  # 매일 리셋용 등록 이름 파일
 
 # ==============================
-# 데이터 함수
+# 데이터 처리 함수
 # ==============================
 def load_data():
     try:
@@ -30,17 +33,6 @@ def load_data():
 def save_data(data):
     with open(DATA_FILE,"w") as f:
         json.dump(data,f,ensure_ascii=False, indent=4)
-
-def load_names():
-    try:
-        with open(NAME_FILE,"r") as f:
-            return json.load(f)
-    except:
-        return []
-
-def save_names(names):
-    with open(NAME_FILE,"w") as f:
-        json.dump(names,f,ensure_ascii=False, indent=4)
 
 def is_allowed(update):
     return update.message.chat.id == ALLOWED_CHAT_ID
@@ -85,9 +77,28 @@ def register(update, context):
     data["names"][uid] = name
     save_data(data)
     update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
+    save_names_excel(data)  # 이름 파일 갱신
 
 # ==============================
-# 기록 입력 (온라인/대면)
+# 이름 5열씩 엑셀 저장 (매일 리셋)
+# ==============================
+def save_names_excel(data):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "등록유저"
+    names = list(data.get("names", {}).values())
+    row = 1
+    col = 1
+    for idx, name in enumerate(names):
+        ws.cell(row=row, column=col, value=name)
+        col += 1
+        if (idx+1) % 5 == 0:
+            row += 1
+            col = 1
+    wb.save(NAMES_FILE)
+
+# ==============================
+# 기록 입력
 # ==============================
 def record(update, context):
     if not is_allowed(update): return
@@ -113,32 +124,13 @@ def record(update, context):
     data["records"][uid][day][key] = dict(zip(cats, values))
     save_data(data)
 
-    # 이름 리스트 업데이트 (매일 리셋)
-    names = load_names()
-    if update.message.from_user.first_name not in names:
-        names.append(update.message.from_user.first_name)
-        save_names(names)
-
+    # 누적 합계 계산
+    total = sum(values)
     label = "온라인" if mode=="o" else "대면"
-    update.message.reply_text(f"✅ 저장 완료 ({label})")
+    update.message.reply_text(f"✅ 저장 완료 ({label}) 총합: {total}")
 
 # ==============================
-# 이름 리스트 보기 (5열씩)
-# ==============================
-def show_names(update, context):
-    names = load_names()
-    if not names:
-        update.message.reply_text("등록된 이름이 없습니다")
-        return
-    msg = ""
-    for i, n in enumerate(names):
-        msg += n + " "
-        if (i+1) % 5 == 0:
-            msg += "\n"
-    update.message.reply_text(msg)
-
-# ==============================
-# 팀별 조회 (조장용)
+# 조장 조회
 # ==============================
 def team_stats(update, context):
     if update.message.from_user.id not in LEADER_IDS: return
@@ -162,49 +154,60 @@ def team_stats(update, context):
     update.message.reply_text(msg)
 
 # ==============================
-# 전체 조회 (관리자용)
+# 관리자 전체 조회
 # ==============================
 def all_view(update, context):
     if update.message.from_user.id not in ADMIN_IDS: return
     if not is_allowed(update): return
     data = load_data()
-    teams = {}
+    msg = ""
+
+    # 하루치 온라인/오프라인 누적
+    online_count = 0
+    offline_count = 0
+
     for uid, team in data.get("users", {}).items():
         name = data["names"][uid]
         rec = data.get("records", {}).get(uid, {}).get(get_day(), {})
-        teams.setdefault(team, []).append((name, rec))
+        if "online" in rec:
+            o = rec["online"]
+            online_count += sum(o.values())
+        if "offline" in rec:
+            f = rec["offline"]
+            offline_count += sum(f.values())
 
-    msg = ""
-    for team in sorted(teams):
-        msg += f"{team}조\n"
-        for name, rec in teams[team]:
-            msg += f"{name}\n"
-            if "online" in rec:
-                o = rec["online"]
-                msg += f"O {o['말하기']}/{o['쓰기']}/{o['읽기']}/{o['강의']}\n"
-            if "offline" in rec:
-                f = rec["offline"]
-                msg += f"F {f['말하기']}/{f['쓰기']}/{f['읽기']}/{f['강의']}\n"
-            msg += "\n"
+    msg += f"📊 온라인 총합: {online_count}\n"
+    msg += f"📊 대면 총합: {offline_count}\n\n"
+
+    # 하루치 입력 데이터 표시
+    for uid, team in data.get("users", {}).items():
+        name = data["names"][uid]
+        rec = data.get("records", {}).get(uid, {}).get(get_day(), {})
+        msg += f"{name}: "
+        if "online" in rec:
+            o = rec["online"]
+            msg += f"O {o['말하기']}/{o['쓰기']}/{o['읽기']}/{o['강의']} "
+        if "offline" in rec:
+            f = rec["offline"]
+            msg += f"F {f['말하기']}/{f['쓰기']}/{f['읽기']}/{f['강의']}"
         msg += "\n"
     update.message.reply_text(msg)
 
 # ==============================
-# 메인
+# 메인 실행
 # ==============================
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    dp.add_handler(CommandHandler("start", lambda u,c: u.message.reply_text("봇 실행됨")))
+    # 핸들러 등록
     dp.add_handler(CommandHandler("register", register))
     dp.add_handler(CommandHandler("teamstats", team_stats))
     dp.add_handler(CommandHandler("allview", all_view))
-    dp.add_handler(CommandHandler("names", show_names))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, record))
 
+    # 폴링 시작
     updater.start_polling()
-    updater.idle()
 
 if __name__=="__main__":
     main()
