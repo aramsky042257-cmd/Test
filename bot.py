@@ -1,14 +1,12 @@
 # ==============================
-# 📌 Telegram Study Bot (Termux 안전버전)
+# 📌 Telegram Study Bot (Termux 안정판, 버튼 제거)
 # ==============================
 
 import os, json
-import asyncio
 from datetime import datetime, timedelta
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from openpyxl import Workbook
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ==============================
@@ -42,24 +40,14 @@ def get_day():
     return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][datetime.now().weekday()]
 
 # ==============================
-# 시작 / 버튼 UI
+# 안내 메시지
 # ==============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["온라인 입력", "대면 입력"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("입력 버튼입니다", reply_markup=reply_markup)
-
-# ==============================
-# 버튼 선택 처리
-# ==============================
-async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text == "온라인 입력":
-        context.user_data["mode"] = "o"
-        await update.message.reply_text("온라인 입력 모드입니다.\n예시: 10/2/1/0 (말하기/쓰기/읽기/강의)")
-    elif text == "대면 입력":
-        context.user_data["mode"] = "f"
-        await update.message.reply_text("대면 입력 모드입니다.\n예시: 10/2/1/0 (말하기/쓰기/읽기/강의)")
+    await update.message.reply_text(
+        "안녕하세요!\n기록 입력은 아래 형식으로 해주세요:\n"
+        "온라인 입력 → o 10/2/1/0\n"
+        "대면 입력 → f 10/2/1/0"
+    )
 
 # ==============================
 # 기록 입력
@@ -72,16 +60,13 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("먼저 /register 조 이름 입력해주세요")
         return
 
-    mode = context.user_data.get("mode")
-    if not mode:
-        await update.message.reply_text("먼저 '온라인 입력' 또는 '대면 입력' 버튼을 눌러주세요")
-        return
-
     try:
-        values = list(map(int, update.message.text.split("/")))
+        mode, val = update.message.text.split(" ",1)
+        if mode not in ("o","f"): raise Exception
+        values = list(map(int, val.split("/")))
         if len(values) != 4: raise Exception
     except:
-        await update.message.reply_text("형식이 잘못되었습니다. 예시: 10/2/1/0")
+        await update.message.reply_text("형식이 잘못되었습니다.\n예시: o 10/2/1/0")
         return
 
     cats = ["말하기","쓰기","읽기","강의"]
@@ -95,8 +80,6 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     label = "온라인" if mode=="o" else "대면"
     await update.message.reply_text(f"✅ 저장 완료 ({label})")
-
-    context.user_data.pop("mode")
 
 # ==============================
 # 유저 등록
@@ -123,7 +106,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
 
 # ==============================
-# 단순 조회 예시 (조장/관리자)
+# 조장 조회
 # ==============================
 async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in LEADER_IDS: return
@@ -170,10 +153,7 @@ def main():
     app.add_handler(CommandHandler("register", register))
     app.add_handler(CommandHandler("teamstats", team_stats))
 
-    # ✅ 버튼 핸들러 (텍스트 필터 제한)
-    app.add_handler(MessageHandler(filters.Regex("^(온라인 입력|대면 입력)$"), handle_button))
-
-    # ✅ 기록 핸들러
+    # 기록 핸들러
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
 
     # 스케줄러
@@ -184,3 +164,4 @@ def main():
 
 if __name__=="__main__":
     main()
+
