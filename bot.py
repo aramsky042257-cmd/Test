@@ -1,21 +1,18 @@
 # ==============================
-# 📌 Telegram Study Bot (Termux 최적화 버전)
+# 📌 Telegram Study Bot (Termux 최적화 버전, 스케줄러 없음)
 # ==============================
 
 import os, json, asyncio
-from datetime import datetime, timedelta
-#from telegram import ReplyKeyboardMarkup  # 버튼 UI 제거
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ==============================
 # 환경 변수
 # ==============================
-
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS","").split(",") if x]
@@ -26,7 +23,6 @@ DATA_FILE = os.path.join(os.getcwd(), "data.json")
 # ==============================
 # 기본 데이터 함수
 # ==============================
-
 def load_data():
     try:
         with open(DATA_FILE,"r") as f:
@@ -59,21 +55,8 @@ def get_week_key():
     return f"{year}-{month:02d} {week}주"
 
 # ==============================
-# 시작 / 버튼 UI 제거
-# ==============================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 버튼 UI 제거
-    await update.message.reply_text("입력은 o 또는 f 형식으로 메시지로 보내주세요.\n예: o 10/2/1/0 또는 f 10/2/1/0")
-
-# 버튼 관련 핸들러 제거해도 됨
-# async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     pass
-
-# ==============================
 # 유저 등록
 # ==============================
-
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
     try:
@@ -98,7 +81,6 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================
 # 기록 입력
 # ==============================
-
 async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
     uid = str(update.message.from_user.id)
@@ -127,7 +109,6 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================
 # 조장 조회
 # ==============================
-
 async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in LEADER_IDS: return
     if not is_allowed(update): return
@@ -152,7 +133,6 @@ async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================
 # 관리자 전체 조회
 # ==============================
-
 async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS: return
     if not is_allowed(update): return
@@ -180,25 +160,12 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================
 # 엑셀 관련 함수
 # ==============================
-
-# 함수 내용 그대로 유지
+# (함수 내용 그대로 유지)
 # create_weekly_table_excel(), create_weekly_chart_excel(), save_weekly_summary()
 
 # ==============================
 # 리포트
 # ==============================
-
-async def send_weekly_report(app):
-    save_weekly_summary()
-    table_file = create_weekly_table_excel()
-    chart_file = create_weekly_chart_excel()
-    for admin_id in ADMIN_IDS:
-        await app.bot.send_message(admin_id, "📊 주간 리포트")
-        await app.bot.send_document(admin_id, open(table_file,"rb"))
-        await app.bot.send_document(admin_id, open(chart_file,"rb"))
-    os.remove(table_file)
-    os.remove(chart_file)
-
 async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS: return
     file = create_weekly_chart_excel()
@@ -206,35 +173,17 @@ async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.remove(file)
 
 # ==============================
-# 스케줄러 시작 함수
-# ==============================
-
-scheduler = AsyncIOScheduler()
-
-def start_scheduler(app):
-    scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)), "cron", day_of_week="sun", hour=23)
-    scheduler.start()
-
-# ==============================
 # 메인 실행
 # ==============================
-
-# Termux 호환을 위해 asyncio.run 제거
 if __name__=="__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
     # 핸들러 등록
-    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("register", register))
     app.add_handler(CommandHandler("teamstats", team_stats))
     app.add_handler(CommandHandler("allview", all_view))
     app.add_handler(CommandHandler("weeklychart", weekly_chart))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
-    # 버튼 메시지 핸들러 제거
-    # app.add_handler(MessageHandler(filters.TEXT, handle_button))
 
-    # 스케줄러 시작
-    start_scheduler(app)
-
-    # 봇 실행 (폴링)
-    app.run_polling()
+    # 봇 실행
+    asyncio.run(app.run_polling())
