@@ -1,37 +1,26 @@
+# bot.py (최종 통합본, .env 유지, 주석/안내 포함)
+
 import json
 import os
 import shutil
 import threading
 import time
 from datetime import datetime
-from openpyxl import Workbook
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
 
 # ==============================
-# 📌 .env 불러오기
+# 📌 Load environment variables
 # ==============================
 load_dotenv()
+TOKEN = os.getenv("TELEGRAM_TOKEN")        # 봇 토큰
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS","").split(",")]  # 관리자의 Telegram ID, 쉼표로 구분
+LEADER_IDS = [int(x) for x in os.getenv("LEADER_IDS","").split(",")] # 조장 ID
+ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))                   # 허용 그룹 채팅 ID
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-
-# 쉼표 구분 ID를 리스트로 변환
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
-LEADER_IDS = [int(x) for x in os.getenv("LEADER_IDS", "").split(",") if x]
-
-# 그룹 채팅 허용
-ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
-
-# 데이터 저장 파일
 DATA_FILE = "data.json"
 LOG_FILE = "log.json"
-
-# 요일 → 지역 매핑
-DAY_REGION = {
-    "월": "서울", "화": "경기", "수": "인천", "목": "부산",
-    "금": "대구", "토": "광주", "일": "기타"
-}
 
 # ==============================
 # 📌 기본 함수
@@ -59,27 +48,26 @@ def save_log(log):
         json.dump(log, f, ensure_ascii=False, indent=4)
 
 def is_allowed(update):
-    """메시지가 허용 그룹에서 왔는지 확인"""
     return update.message.chat.id == ALLOWED_CHAT_ID
 
 def get_day():
-    return ["월","화","수","목","금","토","일"][datetime.now().weekday()]
+    return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][datetime.now().weekday()]
 
 def is_valid_time():
     return datetime.now().hour < 23
 
 # ==============================
-# 💾 자동 백업
+# 💾 백업 (시간별 저장)
 # ==============================
 def backup():
     try:
         now = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if os.path.exists(DATA_FILE):
-            shutil.copy(DATA_FILE, f"backup_{now}.json")
+            shutil.copy(DATA_FILE, f"backup_data_{now}.json")
         if os.path.exists(LOG_FILE):
             shutil.copy(LOG_FILE, f"backup_log_{now}.json")
     except Exception as e:
-        print("백업 실패:", e)
+        print("Backup error:", e)
 
 def auto_backup():
     while True:
@@ -89,106 +77,81 @@ def auto_backup():
 threading.Thread(target=auto_backup, daemon=True).start()
 
 # ==============================
-# 📌 /등록
+# 📌 Register user to a team
 # ==============================
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
 
-    user_id = str(update.message.from_user.id)
-    name = update.message.from_user.first_name
-
     try:
-        team = context.args[0]
+        team, name = context.args[0], context.args[1]  # /register 3 아람
     except:
-        await update.message.reply_text("사용법: /등록 3")
+        await update.message.reply_text("사용법: /register <조번호> <이름> (예: /register 3 아람)")
         return
 
+    user_id = str(update.message.from_user.id)
     data = load_data()
     data.setdefault("users", {})
     data.setdefault("names", {})
 
     data["users"][user_id] = team
     data["names"][user_id] = name
-
     save_data(data)
-    await update.message.reply_text(f"{team}조 등록 완료!")
+
+    await update.message.reply_text(f"{name}님이 {team}조로 등록되었습니다!")
 
 # ==============================
-# 📌 /기록
+# 📌 Record user activity (말하기/쓰기/읽기/강의)
 # ==============================
 async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
-
     if not is_valid_time():
-        await update.message.reply_text("23시 이후 입력 불가!")
+        await update.message.reply_text("23시 이후에는 입력할 수 없습니다.")
         return
 
-    user = update.message.from_user
-    user_id = str(user.id)
-    name = user.first_name
+    user_id = str(update.message.from_user.id)
+    name = update.message.from_user.first_name
     text = update.message.text
 
     try:
-        category, count = text.split(":")
-        count = int(count)
+        # 입력 형식: 말하기/쓰기/읽기/강의 숫자순으로, 예: 1/0/0/2
+        values = list(map(int, text.split("/")))
+        if len(values) != 4:
+            raise ValueError
     except:
+        await update.message.reply_text("잘못된 형식입니다! 예시: 1/0/0/2 (말하기/쓰기/읽기/강의)")
         return
 
-    if category not in ["말하기","쓰기","읽기","강의"]:
-        return
-
+    categories = ["말하기","쓰기","읽기","강의"]
     data = load_data()
     day = get_day()
-    region = DAY_REGION.get(day, "기타")
+    region = "기본지역"
 
     data.setdefault("records", {})
     data.setdefault("names", {})
 
     data["names"][user_id] = name
     data["records"].setdefault(user_id, {})
-    data["records"][user_id].setdefault(day, {"region": region,"말하기":0,"쓰기":0,"읽기":0,"강의":0})
+    data["records"][user_id][day] = {cat: val for cat, val in zip(categories, values)}
 
-    data["records"][user_id][day][category] += count
     save_data(data)
 
+    # 로그 기록
     log = load_log()
-    log.append({"user": name,"action": f"{category}+{count}","day": day,"region": region,"time": str(datetime.now())})
+    log.append({
+        "user": name,
+        "action": f"{text}",
+        "day": day,
+        "region": region,
+        "time": str(datetime.now())
+    })
     save_log(log)
 
-    await update.message.reply_text(f"{category} +{count} 완료 ({region})")
+    await update.message.reply_text(f"기록 완료! ({'/'.join(categories)} = {text})")
 
 # ==============================
-# 📌 /취소
-# ==============================
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update):
-        return
-
-    user_id = str(update.message.from_user.id)
-
-    try:
-        category, count = context.args[0].split(":")
-        count = int(count)
-    except:
-        await update.message.reply_text("사용법: /취소 말하기:1")
-        return
-
-    data = load_data()
-    day = get_day()
-
-    try:
-        data["records"][user_id][day][category] -= count
-        if data["records"][user_id][day][category] < 0:
-            data["records"][user_id][day][category] = 0
-        save_data(data)
-        await update.message.reply_text("취소 완료")
-    except:
-        await update.message.reply_text("취소 실패")
-
-# ==============================
-# 📌 /내기록
+# 📌 Show my record (이름 포함)
 # ==============================
 async def my_record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
@@ -200,104 +163,138 @@ async def my_record(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         r = data["records"][user_id][day]
-        msg = f"📊 [{day}요일 ({r['region']})]\n\n"
-        for k, v in r.items():
-            if k != "region":
-                msg += f"{k}: {v}\n"
+        name = data["names"].get(user_id, "알수없음")
+        msg = f"📊 오늘 기록\n이름: {name}\n"
+        for k in ["말하기","쓰기","읽기","강의"]:
+            msg += f"{k}: {r.get(k,0)}\n"
         await update.message.reply_text(msg)
     except:
-        await update.message.reply_text("기록 없음")
+        await update.message.reply_text("기록이 없습니다.")
 
 # ==============================
-# 📊 /조통계
+# 📌 Team stats (조장용)
 # ==============================
 async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return
+    if update.message.from_user.id not in LEADER_IDS:
+        await update.message.reply_text("조장 전용 명령어입니다.")
+        return
 
     data = load_data()
     day = get_day()
-    region = DAY_REGION.get(day)
-
+    team_members = {uid: name for uid, name in data.get("users", {}).items() if name == data["users"].get(str(uid))}
     result = {}
-    for user_id, rec in data.get("records", {}).items():
-        team = data.get("users", {}).get(user_id)
-        if not team:
+
+    # 팀별 합계 계산
+    for uid, team in data.get("users", {}).items():
+        if uid not in data.get("records", {}): 
             continue
-        result.setdefault(team, {"말하기":0,"쓰기":0,"읽기":0,"강의":0})
-        if day in rec:
-            for k in result[team]:
-                result[team][k] += rec[day][k]
+        if day not in data["records"][uid]:
+            continue
+        if team not in result:
+            result[team] = {"말하기":0,"쓰기":0,"읽기":0,"강의":0,"members":{}}
+        for k in ["말하기","쓰기","읽기","강의"]:
+            val = data["records"][uid][day].get(k,0)
+            result[team][k] += val
+            result[team]["members"][uid] = data["records"][uid][day]
 
-    msg = f"📊 [{day}요일 ({region}) 조별 통계]\n\n"
-    for t, v in sorted(result.items()):
-        msg += f"{t}조\n"
-        for k in v:
-            msg += f"{k}: {v[k]}\n"
+    # 메시지 작성
+    msg = f"📊 [{day} 팀별 기록]\n\n"
+    for t, v in result.items():
+        msg += f"{t}조 팀 합계:\n"
+        for k in ["말하기","쓰기","읽기","강의"]:
+            msg += f"  {k}: {v[k]}\n"
+        msg += "팀원 개별 기록:\n"
+        for uid, rec in v["members"].items():
+            name = data["names"].get(uid,"알수없음")
+            msg += f"  {name}: " + "/".join(str(rec[k]) for k in ["말하기","쓰기","읽기","강의"]) + "\n"
         msg += "\n"
-
     await update.message.reply_text(msg)
 
 # ==============================
-# 📊 /전체보기 (관리자 전용)
+# 📌 Admin view (관리자용)
 # ==============================
 async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in ADMIN_IDS or not is_allowed(update):
+    if not is_allowed(update):
+        return
+    if update.message.from_user.id not in ADMIN_IDS:
+        await update.message.reply_text("관리자 전용 명령어입니다.")
         return
 
     data = load_data()
     day = get_day()
-    region = DAY_REGION.get(day)
-
-    msg = f"📊 [{day}요일 ({region}) 전체]\n\n"
+    msg = f"📊 [{day} 전체 사용자 기록]\n\n"
     for uid, rec in data.get("records", {}).items():
-        name = data.get("names", {}).get(uid, "")
-        team = data.get("users", {}).get(uid, "")
+        name = data["names"].get(uid,"알수없음")
+        team = data["users"].get(uid,"")
         msg += f"{name} ({team}조)\n"
-        if day in rec:
-            for k, v in rec[day].items():
-                if k != "region":
-                    msg += f"  {k}: {v}\n"
+        for k in ["말하기","쓰기","읽기","강의"]:
+            msg += f"  {k}: {rec.get(day, {}).get(k,0)}\n"
         msg += "\n"
-
     await update.message.reply_text(msg)
 
 # ==============================
-# 🎨 관리자 메뉴
+# 📌 Set region (관리자용)
+# ==============================
+async def set_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update):
+        return
+    if update.message.from_user.id not in ADMIN_IDS:
+        await update.message.reply_text("관리자 전용 명령어입니다.")
+        return
+    await update.message.reply_text("지역 변경 기능은 준비중입니다.")
+
+# ==============================
+# 📌 Excel export (관리자용)
+# ==============================
+async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Excel 내보내기 기능은 준비중입니다.")
+
+# ==============================
+# 📌 Admin menu
 # ==============================
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in ADMIN_IDS or not is_allowed(update):
+    if not is_allowed(update):
+        return
+    if update.message.from_user.id not in ADMIN_IDS:
         return
 
-    keyboard = [["📊 전체보기","📈 조통계"],["📥 엑셀","🔄 리셋"]]
+    keyboard = [
+        ["📊 All View", "📈 Team Stats"],
+        ["📥 Excel", "🔄 Reset"]
+    ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("관리자 메뉴", reply_markup=reply_markup)
 
 # ==============================
-# 📌 리셋 (관리자 전용)
+# 📌 Reset (관리자용, 숨김처리)
 # ==============================
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id not in ADMIN_IDS or not is_allowed(update):
+    if not is_allowed(update):
         return
-
+    if update.message.from_user.id not in ADMIN_IDS:
+        return
     save_data({})
-    await update.message.reply_text("전체 리셋 완료")
+    await update.message.reply_text("모든 데이터 초기화 완료")
 
 # ==============================
-# 실행
+# 📌 Build bot
 # ==============================
 app = ApplicationBuilder().token(TOKEN).build()
 
-app.add_handler(CommandHandler("등록", register))
-app.add_handler(CommandHandler("취소", cancel))
-app.add_handler(CommandHandler("내기록", my_record))
-app.add_handler(CommandHandler("조통계", team_stats))
-app.add_handler(CommandHandler("전체보기", all_view))
-app.add_handler(CommandHandler("관리자", admin_menu))
-app.add_handler(CommandHandler("리셋", reset))
+# CommandHandlers
+app.add_handler(CommandHandler("register", register))   # 유저 등록
+app.add_handler(CommandHandler("myrecord", my_record))  # 자기 기록 확인
+app.add_handler(CommandHandler("teamstats", team_stats)) # 조장
+app.add_handler(CommandHandler("allview", all_view))    # 관리자
+app.add_handler(CommandHandler("setregion", set_region))# 관리자
+app.add_handler(CommandHandler("excel", export_excel))  # 관리자
+app.add_handler(CommandHandler("adminmenu", admin_menu))# 관리자 메뉴
+app.add_handler(CommandHandler("reset", reset))         # 관리자 숨김 초기화
+
+# Record messages
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
 
+# Start bot
 app.run_polling()
