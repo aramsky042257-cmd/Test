@@ -1,11 +1,7 @@
-# ==============================
-# 📌 Telegram Study Bot (Termux 최적화 버전, 스케줄러 없음)
-# ==============================
-
-import os, json, asyncio
-from datetime import datetime
+import os, json
+from datetime import datetime, timedelta
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from dotenv import load_dotenv
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
@@ -19,9 +15,10 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS","").split(",") if x]
 LEADER_IDS = [int(x) for x in os.getenv("LEADER_IDS","").split(",") if x]
 ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
 DATA_FILE = os.path.join(os.getcwd(), "data.json")
+NAME_FILE = os.path.join(os.getcwd(), "names_daily.json")  # 하루치 이름 리스트
 
 # ==============================
-# 기본 데이터 함수
+# 데이터 함수
 # ==============================
 def load_data():
     try:
@@ -33,6 +30,17 @@ def load_data():
 def save_data(data):
     with open(DATA_FILE,"w") as f:
         json.dump(data,f,ensure_ascii=False, indent=4)
+
+def load_names():
+    try:
+        with open(NAME_FILE,"r") as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_names(names):
+    with open(NAME_FILE,"w") as f:
+        json.dump(names,f,ensure_ascii=False, indent=4)
 
 def is_allowed(update):
     return update.message.chat.id == ALLOWED_CHAT_ID
@@ -57,7 +65,7 @@ def get_week_key():
 # ==============================
 # 유저 등록
 # ==============================
-async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def register(update, context):
     if not is_allowed(update): return
     try:
         team = context.args[0]
@@ -67,7 +75,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
             team = context.args[0]
             name = update.message.from_user.first_name
         except:
-            await update.message.reply_text("/register 1 홍길동")
+            update.message.reply_text("/register 1 홍길동")
             return
     uid = str(update.message.from_user.id)
     data = load_data()
@@ -76,25 +84,26 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["users"][uid] = team
     data["names"][uid] = name
     save_data(data)
-    await update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
+    update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
 
 # ==============================
-# 기록 입력
+# 기록 입력 (온라인/대면)
 # ==============================
-async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def record(update, context):
     if not is_allowed(update): return
     uid = str(update.message.from_user.id)
     data = load_data()
     if uid not in data.get("users", {}):
-        await update.message.reply_text("먼저 /register 조 이름 입력해주세요")
+        update.message.reply_text("먼저 /register 조 이름 입력해주세요")
         return
     try:
         mode, val = update.message.text.split(" ",1)
         values = list(map(int, val.split("/")))
         if len(values) != 4: raise Exception
     except:
-        await update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
+        update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
         return
+
     cats = ["말하기","쓰기","읽기","강의"]
     day = get_day()
     data.setdefault("records", {})
@@ -103,13 +112,35 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = "online" if mode=="o" else "offline"
     data["records"][uid][day][key] = dict(zip(cats, values))
     save_data(data)
+
+    # 이름 리스트 업데이트 (매일 리셋)
+    names = load_names()
+    if update.message.from_user.first_name not in names:
+        names.append(update.message.from_user.first_name)
+        save_names(names)
+
     label = "온라인" if mode=="o" else "대면"
-    await update.message.reply_text(f"✅ 저장 완료 ({label})")
+    update.message.reply_text(f"✅ 저장 완료 ({label})")
 
 # ==============================
-# 조장 조회
+# 이름 리스트 보기 (5열씩)
 # ==============================
-async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def show_names(update, context):
+    names = load_names()
+    if not names:
+        update.message.reply_text("등록된 이름이 없습니다")
+        return
+    msg = ""
+    for i, n in enumerate(names):
+        msg += n + " "
+        if (i+1) % 5 == 0:
+            msg += "\n"
+    update.message.reply_text(msg)
+
+# ==============================
+# 팀별 조회 (조장용)
+# ==============================
+def team_stats(update, context):
     if update.message.from_user.id not in LEADER_IDS: return
     if not is_allowed(update): return
     uid = str(update.message.from_user.id)
@@ -128,12 +159,12 @@ async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f = rec["offline"]
             msg += f"F {f['말하기']}/{f['쓰기']}/{f['읽기']}/{f['강의']}\n"
         msg += "\n"
-    await update.message.reply_text(msg)
+    update.message.reply_text(msg)
 
 # ==============================
-# 관리자 전체 조회
+# 전체 조회 (관리자용)
 # ==============================
-async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def all_view(update, context):
     if update.message.from_user.id not in ADMIN_IDS: return
     if not is_allowed(update): return
     data = load_data()
@@ -142,6 +173,7 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = data["names"][uid]
         rec = data.get("records", {}).get(uid, {}).get(get_day(), {})
         teams.setdefault(team, []).append((name, rec))
+
     msg = ""
     for team in sorted(teams):
         msg += f"{team}조\n"
@@ -155,35 +187,24 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"F {f['말하기']}/{f['쓰기']}/{f['읽기']}/{f['강의']}\n"
             msg += "\n"
         msg += "\n"
-    await update.message.reply_text(msg)
+    update.message.reply_text(msg)
 
 # ==============================
-# 엑셀 관련 함수
+# 메인
 # ==============================
-# (함수 내용 그대로 유지)
-# create_weekly_table_excel(), create_weekly_chart_excel(), save_weekly_summary()
+def main():
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-# ==============================
-# 리포트
-# ==============================
-async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS: return
-    file = create_weekly_chart_excel()
-    await update.message.reply_document(open(file,"rb"))
-    os.remove(file)
+    dp.add_handler(CommandHandler("start", lambda u,c: u.message.reply_text("봇 실행됨")))
+    dp.add_handler(CommandHandler("register", register))
+    dp.add_handler(CommandHandler("teamstats", team_stats))
+    dp.add_handler(CommandHandler("allview", all_view))
+    dp.add_handler(CommandHandler("names", show_names))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, record))
 
-# ==============================
-# 메인 실행
-# ==============================
+    updater.start_polling()
+    updater.idle()
+
 if __name__=="__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # 핸들러 등록
-    app.add_handler(CommandHandler("register", register))
-    app.add_handler(CommandHandler("teamstats", team_stats))
-    app.add_handler(CommandHandler("allview", all_view))
-    app.add_handler(CommandHandler("weeklychart", weekly_chart))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
-
-    # 봇 실행
-    asyncio.run(app.run_polling())
+    main()
