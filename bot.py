@@ -1,6 +1,6 @@
 ==============================
 
-📌 Telegram Study Bot (Termux 최적화 버전)
+ Telegram Study Bot (Termux 최적화 버전)
 
 ==============================
 
