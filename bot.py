@@ -1,10 +1,8 @@
 import os, json
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from openpyxl import Workbook
-from openpyxl.chart import LineChart, Reference
 
 # ==============================
 # 환경 변수
@@ -38,6 +36,50 @@ def get_day():
     return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][datetime.now().weekday()]
 
 # ==============================
+# 이름 파일 처리 (온라인/오프라인 섹션)
+# ==============================
+def reset_names_file():
+    if not os.path.exists(NAMES_FILE):
+        with open(NAMES_FILE,"w",encoding="utf-8") as f:
+            f.write("[Online Users]\n\n[Offline Users]\n\n")
+
+def add_name_to_file(mode, name):
+    reset_names_file()
+    section = "[Online Users]" if mode=="o" else "[Offline Users]"
+
+    with open(NAMES_FILE,"r",encoding="utf-8") as f:
+        lines = f.readlines()
+
+    # 섹션 시작 인덱스 찾기
+    try:
+        idx = lines.index(section+"\n") + 1
+    except ValueError:
+        lines.append(section+"\n")
+        idx = len(lines)
+
+    # 섹션 안의 기존 이름 가져오기
+    section_names = []
+    i = idx
+    while i < len(lines) and not lines[i].startswith("[") and lines[i].strip():
+        section_names += lines[i].strip().split()
+        i += 1
+
+    if name in section_names:  # 섹션 내 중복 방지
+        return
+
+    section_names.append(name)
+
+    # 5개씩 끊어서 작성
+    new_lines = []
+    for i in range(0,len(section_names),5):
+        new_lines.append("\t".join(section_names[i:i+5]) + "\n")
+
+    lines[idx:i] = new_lines
+
+    with open(NAMES_FILE,"w",encoding="utf-8") as f:
+        f.writelines(lines)
+
+# ==============================
 # 유저 등록
 # ==============================
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -62,7 +104,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
 
 # ==============================
-# 기록 입력
+# 기록 입력 (온라인/오프라인)
 # ==============================
 async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
@@ -71,21 +113,28 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in data.get("users", {}):
         await update.message.reply_text("먼저 /register 조 이름 입력해주세요")
         return
+
     try:
         mode, val = update.message.text.split(" ",1)
-        values = list(map(int, val.split("/")))
-        if len(values) != 4: raise Exception
+        values = list(map(int,val.split("/")))
+        if len(values)!=4: raise Exception
     except:
         await update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
         return
+
     cats = ["말하기","쓰기","읽기","강의"]
     day = get_day()
     data.setdefault("records", {})
     data["records"].setdefault(uid, {})
     data["records"][uid].setdefault(day, {})
     key = "online" if mode=="o" else "offline"
-    data["records"][uid][day][key] = dict(zip(cats, values))
+    data["records"][uid][day][key] = dict(zip(cats,values))
     save_data(data)
+
+    # 이름 파일에 추가
+    name = data["names"][uid]
+    add_name_to_file(mode,name)
+
     await update.message.reply_text(f"✅ 저장 완료 ({'온라인' if mode=='o' else '대면'})")
 
 # ==============================
@@ -113,20 +162,21 @@ async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ==============================
-# 관리자 전체 조회 (하루/주간 누적)
+# 관리자 전체 조회 (하루치)
 # ==============================
 async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS: return
     if not is_allowed(update): return
     data = load_data()
     teams = {}
-    # 오늘 이름 리스트
     names_today = []
+
     for uid, team in data.get("users", {}).items():
         name = data["names"][uid]
         rec = data.get("records", {}).get(uid, {}).get(get_day(), {})
         teams.setdefault(team, []).append((name, rec))
         names_today.append(name)
+
     # names.txt 저장 (5열씩)
     with open(NAMES_FILE,"w",encoding="utf-8") as f:
         for i, name in enumerate(names_today):
@@ -136,6 +186,7 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 f.write(" ")
         f.write("\n")
+
     # 메시지 작성
     msg = ""
     for team in sorted(teams):
@@ -160,7 +211,7 @@ def main():
     app.add_handler(CommandHandler("teamstats", team_stats))
     app.add_handler(CommandHandler("allview", all_view))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
-    app.run_polling()  # Termux 환경에 맞게 이벤트 루프 자동 관리
+    app.run_polling()  # Termux 환경에 맞게 asyncio 루프 자동 처리
 
 if __name__ == "__main__":
     main()
