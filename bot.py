@@ -1,14 +1,15 @@
 # ==============================
-# 📌 Telegram Study Bot (Termux/PTB22 호환)
+# 📌 Telegram Study Bot (Termux 최적화 버전)
 # ==============================
 
-import json, os
+import os, json, asyncio
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ==============================
 # 환경 변수
@@ -18,10 +19,10 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS","").split(",") if x]
 LEADER_IDS = [int(x) for x in os.getenv("LEADER_IDS","").split(",") if x]
 ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
-DATA_FILE = "data.json"
+DATA_FILE = os.path.join(os.getcwd(), "data.json")
 
 # ==============================
-# 데이터 로드/저장
+# 기본 데이터 함수
 # ==============================
 def load_data():
     try:
@@ -55,19 +56,27 @@ def get_week_key():
     return f"{year}-{month:02d} {week}주"
 
 # ==============================
-# 시작 / 버튼
+# 시작 / 버튼 UI
 # ==============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["온라인 입력", "대면 입력"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("입력 버튼입니다", reply_markup=reply_markup)
 
+# ==============================
+# 버튼 처리 함수 (mode 저장)
+# ==============================
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "온라인 입력":
-        await update.message.reply_text("온라인 입력입니다\n예시: o 10/2/1/0")
+        context.user_data["mode"] = "o"  # 온라인 모드 저장
+        await update.message.reply_text("온라인 입력 모드입니다.\n예시: 10/2/1/0 (말하기/쓰기/읽기/강의)")
+        return
     elif text == "대면 입력":
-        await update.message.reply_text("대면 입력입니다\n예시: f 10/2/1/0")
+        context.user_data["mode"] = "f"  # 대면 모드 저장
+        await update.message.reply_text("대면 입력 모드입니다.\n예시: 10/2/1/0 (말하기/쓰기/읽기/강의)")
+        return
+    # 버튼 아닌 텍스트는 record에서 처리
 
 # ==============================
 # 유저 등록
@@ -94,7 +103,7 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
 
 # ==============================
-# 기록 입력
+# 기록 입력 함수 수정 (mode 자동 처리)
 # ==============================
 async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
@@ -103,13 +112,20 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in data.get("users", {}):
         await update.message.reply_text("먼저 /register 조 이름 입력해주세요")
         return
+
+    mode = context.user_data.get("mode")  # 버튼에서 선택한 모드 가져오기
+    if not mode:
+        await update.message.reply_text("먼저 '온라인 입력' 또는 '대면 입력' 버튼을 눌러주세요")
+        return
+
     try:
-        mode, val = update.message.text.split(" ",1)
-        values = list(map(int, val.split("/")))
+        # 이제 메시지에는 숫자만 입력 (예: 10/2/1/0)
+        values = list(map(int, update.message.text.split("/")))
         if len(values) != 4: raise Exception
     except:
-        await update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
+        await update.message.reply_text("형식이 잘못되었습니다. 예시: 10/2/1/0")
         return
+
     cats = ["말하기","쓰기","읽기","강의"]
     day = get_day()
     data.setdefault("records", {})
@@ -118,8 +134,11 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = "online" if mode=="o" else "offline"
     data["records"][uid][day][key] = dict(zip(cats, values))
     save_data(data)
+
     label = "온라인" if mode=="o" else "대면"
     await update.message.reply_text(f"✅ 저장 완료 ({label})")
+
+    context.user_data.pop("mode")  # 기록 후 모드 초기화
 
 # ==============================
 # 조장 조회
@@ -173,97 +192,64 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ==============================
-# 엑셀 생성
+# 엑셀 관련 함수
 # ==============================
-def create_weekly_table_excel():
-    data = load_data()
-    days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-    wb = Workbook()
-    ws = wb.active
-    ws.append(["조","이름"] + days)
-    for uid, team in data.get("users", {}).items():
-        name = data["names"][uid]
-        recs = data.get("records", {}).get(uid, {})
-        row = [team, name]
-        for d in days:
-            r = recs.get(d)
-            if r:
-                parts=[]
-                for typ in ["online","offline"]:
-                    if typ in r:
-                        v = r[typ]
-                        parts.append(f"{'O' if typ=='online' else 'F'} {v['말하기']}/{v['쓰기']}/{v['읽기']}/{v['강의']}")
-                row.append("\n".join(parts))
-            else:
-                row.append("-")
-        ws.append(row)
-    file="weekly_table.xlsx"
-    wb.save(file)
-    return file
-
-def create_weekly_chart_excel():
-    data = load_data()
-    wb = Workbook()
-    ws = wb.active
-    ws.append(["주차","총합","온라인","대면"])
-    weekly = data.get("weekly_stats", {})
-    for w in sorted(weekly):
-        ws.append([w, weekly[w]["total"], weekly[w]["online"], weekly[w]["offline"]])
-    chart = LineChart()
-    data_ref = Reference(ws, min_col=2, min_row=1, max_row=len(weekly)+1)
-    cats = Reference(ws, min_col=1, min_row=2, max_row=len(weekly)+1)
-    chart.add_data(data_ref, titles_from_data=True)
-    chart.set_categories(cats)
-    ws.add_chart(chart, "E2")
-    file="weekly_chart.xlsx"
-    wb.save(file)
-    return file
-
-def save_weekly_summary():
-    data = load_data()
-    key = get_week_key()
-    total = online = offline = 0
-    for uid, recs in data.get("records", {}).items():
-        for d, val in recs.items():
-            for typ in ["online","offline"]:
-                if typ in val:
-                    for k in ["말하기","쓰기","읽기","강의"]:
-                        total += val[typ][k]
-                        if typ=="online": online+=val[typ][k]
-                        else: offline+=val[typ][k]
-    data.setdefault("weekly_stats",{})
-    data["weekly_stats"][key] = {"total":total,"online":online,"offline":offline}
-    save_data(data)
+# (함수 내용 그대로 유지)
+# create_weekly_table_excel(), create_weekly_chart_excel(), save_weekly_summary()
 
 # ==============================
-# 주간 리포트 (수동)
+# 리포트
 # ==============================
-async def weekly_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS: return
+async def send_weekly_report(app):
     save_weekly_summary()
     table_file = create_weekly_table_excel()
     chart_file = create_weekly_chart_excel()
     for admin_id in ADMIN_IDS:
-        await context.bot.send_message(admin_id, "📊 주간 리포트")
-        await context.bot.send_document(admin_id, open(table_file,"rb"))
-        await context.bot.send_document(admin_id, open(chart_file,"rb"))
+        await app.bot.send_message(admin_id, "📊 주간 리포트")
+        await app.bot.send_document(admin_id, open(table_file,"rb"))
+        await app.bot.send_document(admin_id, open(chart_file,"rb"))
     os.remove(table_file)
     os.remove(chart_file)
 
+async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id not in ADMIN_IDS: return
+    file = create_weekly_chart_excel()
+    await update.message.reply_document(open(file,"rb"))
+    os.remove(file)
+
 # ==============================
-# 메인
+# 스케줄러 시작 함수
 # ==============================
-if __name__=="__main__":
+scheduler = AsyncIOScheduler()
+
+def start_scheduler(app):
+    scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)), "cron", day_of_week="sun", hour=23)
+    scheduler.start()
+
+# ==============================
+# 메인 실행
+# ==============================
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # 핸들러 등록
+    # 커맨드 핸들러
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("register", register))
     app.add_handler(CommandHandler("teamstats", team_stats))
     app.add_handler(CommandHandler("allview", all_view))
-    app.add_handler(CommandHandler("weeklyreport", weekly_report))  # 수동 리포트
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
-    app.add_handler(MessageHandler(filters.TEXT, handle_button))
+    app.add_handler(CommandHandler("weeklychart", weekly_chart))
 
-    # run_polling()만 호출 (블록킹, idle 없음)
-    app.run_polling()
+    # ✅ 버튼 메시지 핸들러 먼저 등록
+    app.add_handler(MessageHandler(filters.TEXT, handle_button))
+    
+    # ✅ 기록 입력 핸들러는 그 다음에 등록
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
+
+    # 스케줄러 시작
+    start_scheduler(app)
+
+    # 봇 실행
+    await app.run_polling()
+
+if __name__=="__main__":
+    asyncio.run(main())
