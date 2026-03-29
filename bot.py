@@ -274,7 +274,7 @@ async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================
 # 메인 실행
 # ==============================
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     # 핸들러
@@ -286,13 +286,14 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
     app.add_handler(MessageHandler(filters.TEXT, handle_button))
 
-    # 스케줄러 (AsyncIOScheduler + 이벤트 루프 내 시작)
+    # 스케줄러
     scheduler = AsyncIOScheduler()
     scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)),
                       "cron", day_of_week="sun", hour=23)
     scheduler.start()
 
-    await app.run_polling()
+    # 앱 실행
+    app.run_polling()
 
 if __name__=="__main__":
-    asyncio.run(main())
+    main()
