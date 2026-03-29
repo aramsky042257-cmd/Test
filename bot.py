@@ -43,7 +43,6 @@ def get_day():
     return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][datetime.now().weekday()]
 
 def get_week_key():
-    """월 기준, 일요일 시작 주차"""
     now = datetime.now()
     year, month = now.year, now.month
     first_day = datetime(year, month, 1)
@@ -87,7 +86,6 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("/register 1 홍길동")
             return
-
     uid = str(update.message.from_user.id)
     data = load_data()
     data.setdefault("users", {})
@@ -104,11 +102,9 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
     uid = str(update.message.from_user.id)
     data = load_data()
-
     if uid not in data.get("users", {}):
         await update.message.reply_text("먼저 /register 조 이름 입력해주세요")
         return
-
     try:
         mode, val = update.message.text.split(" ",1)
         values = list(map(int, val.split("/")))
@@ -116,7 +112,6 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
         return
-
     cats = ["말하기","쓰기","읽기","강의"]
     day = get_day()
     data.setdefault("records", {})
@@ -274,10 +269,10 @@ async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==============================
 # 메인 실행
 # ==============================
-async def main():
+if __name__=="__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # 핸들러
+    # 핸들러 등록
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("register", register))
     app.add_handler(CommandHandler("teamstats", team_stats))
@@ -286,13 +281,11 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
     app.add_handler(MessageHandler(filters.TEXT, handle_button))
 
-    # 스케줄러 (이벤트 루프 안에서 시작)
+    # 스케줄러
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)),
-                      "cron", day_of_week="sun", hour=23)
+    scheduler.configure(event_loop=app.bot.loop)  # 기존 루프 연결
+    scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)), "cron", day_of_week="sun", hour=23)
     scheduler.start()
 
-    await app.run_polling()
-
-if __name__=="__main__":
-    asyncio.run(main())
+    # 봇 실행
+    app.run_polling()
