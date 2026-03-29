@@ -1,9 +1,10 @@
-import os
-import json
+import os, json
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
+from openpyxl import Workbook
+from openpyxl.chart import LineChart, Reference
 
 # ==============================
 # 환경 변수
@@ -17,18 +18,18 @@ DATA_FILE = os.path.join(os.getcwd(), "data.json")
 NAMES_FILE = os.path.join(os.getcwd(), "names.txt")
 
 # ==============================
-# 기본 데이터 함수
+# 데이터 처리
 # ==============================
 def load_data():
     try:
-        with open(DATA_FILE, "r") as f:
+        with open(DATA_FILE,"r") as f:
             return json.load(f)
     except:
         return {}
 
 def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    with open(DATA_FILE,"w") as f:
+        json.dump(data,f,ensure_ascii=False, indent=4)
 
 def is_allowed(update):
     return update.message.chat.id == ALLOWED_CHAT_ID
@@ -36,22 +37,8 @@ def is_allowed(update):
 def get_day():
     return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][datetime.now().weekday()]
 
-def get_week_key():
-    now = datetime.now()
-    year, month = now.year, now.month
-    first_day = datetime(year, month, 1)
-    first_sunday = first_day
-    while first_sunday.weekday() != 6:
-        first_sunday += timedelta(days=1)
-    if now < first_sunday:
-        week = 1
-    else:
-        diff = (now - first_sunday).days
-        week = (diff // 7) + 1
-    return f"{year}-{month:02d} {week}주"
-
 # ==============================
-# 등록
+# 유저 등록
 # ==============================
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
@@ -72,18 +59,6 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["users"][uid] = team
     data["names"][uid] = name
     save_data(data)
-
-    # names.txt 갱신 (매일 새로 덮어쓰기)
-    today_names = [data["names"][uid] for uid in data.get("users", {})]
-    with open(NAMES_FILE, "w", encoding="utf-8") as f:
-        for i, n in enumerate(today_names):
-            f.write(n)
-            if (i+1) % 5 == 0:
-                f.write("\n")
-            else:
-                f.write(" ")
-        f.write("\n")
-
     await update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
 
 # ==============================
@@ -103,7 +78,6 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
         return
-
     cats = ["말하기","쓰기","읽기","강의"]
     day = get_day()
     data.setdefault("records", {})
@@ -112,8 +86,7 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = "online" if mode=="o" else "offline"
     data["records"][uid][day][key] = dict(zip(cats, values))
     save_data(data)
-    label = "온라인" if mode=="o" else "대면"
-    await update.message.reply_text(f"✅ 저장 완료 ({label})")
+    await update.message.reply_text(f"✅ 저장 완료 ({'온라인' if mode=='o' else '대면'})")
 
 # ==============================
 # 조장 조회 (하루치)
@@ -140,57 +113,54 @@ async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ==============================
-# 관리자 전체 조회 (하루치 + 주간 누적)
+# 관리자 전체 조회 (하루/주간 누적)
 # ==============================
 async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS: return
     if not is_allowed(update): return
     data = load_data()
     teams = {}
+    # 오늘 이름 리스트
+    names_today = []
     for uid, team in data.get("users", {}).items():
         name = data["names"][uid]
         rec = data.get("records", {}).get(uid, {}).get(get_day(), {})
         teams.setdefault(team, []).append((name, rec))
-
-    # 하루치 + 누적 합계
+        names_today.append(name)
+    # names.txt 저장 (5열씩)
+    with open(NAMES_FILE,"w",encoding="utf-8") as f:
+        for i, name in enumerate(names_today):
+            f.write(name)
+            if (i+1)%5==0:
+                f.write("\n")
+            else:
+                f.write(" ")
+        f.write("\n")
+    # 메시지 작성
     msg = ""
     for team in sorted(teams):
         msg += f"{team}조\n"
-        total_online = {"말하기":0,"쓰기":0,"읽기":0,"강의":0}
-        total_offline = {"말하기":0,"쓰기":0,"읽기":0,"강의":0}
-        offline_count = 0
-        online_count = 0
         for name, rec in teams[team]:
             msg += f"{name}\n"
             if "online" in rec:
                 o = rec["online"]
                 msg += f"O {o['말하기']}/{o['쓰기']}/{o['읽기']}/{o['강의']}\n"
-                for k in total_online: total_online[k] += o[k]
-                online_count += 1
             if "offline" in rec:
                 f = rec["offline"]
                 msg += f"F {f['말하기']}/{f['쓰기']}/{f['읽기']}/{f['강의']}\n"
-                for k in total_offline: total_offline[k] += f[k]
-                offline_count += 1
-        msg += f"\n▶ 대면 참여자 수: {offline_count}명, 합계: {total_offline}\n"
-        msg += f"▶ 온라인 참여자 수: {online_count}명, 합계: {total_online}\n\n"
+        msg += "\n"
     await update.message.reply_text(msg)
 
 # ==============================
 # 메인 실행
 # ==============================
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
-    # 핸들러 등록
     app.add_handler(CommandHandler("register", register))
     app.add_handler(CommandHandler("teamstats", team_stats))
     app.add_handler(CommandHandler("allview", all_view))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
-
-    # 봇 실행 (폴링)
-    await app.run_polling()
+    app.run_polling()  # Termux 환경에 맞게 이벤트 루프 자동 관리
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
