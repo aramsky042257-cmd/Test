@@ -1,29 +1,20 @@
 # ==============================
-# 📌 Telegram Study Bot (최종 완성)
-# ==============================
-# ✔ 유저 등록
-# ✔ 온라인(o) / 대면(f) 기록
-# ✔ 개인 조회
-# ✔ 조장 팀 조회 (/teamstats)
-# ✔ 관리자 전체 조회 (/allview)
-# ✔ 주간 엑셀
-# ✔ 주간 그래프 (누적)
-# ✔ 지역 설정
-# ✔ 주차 = 달력 + 일요일 기준
-# ✔ 관리자 / 조장 권한 분리
+# 📌 Telegram Study Bot (완전체 최종 + UX 개선)
 # ==============================
 
 import json, os
 from datetime import datetime, timedelta
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
 
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 # ==============================
-# 📌 환경 변수
+# 환경 변수
 # ==============================
 load_dotenv()
 
@@ -35,7 +26,7 @@ ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
 DATA_FILE = "data.json"
 
 # ==============================
-# 📌 기본 함수
+# 기본 함수
 # ==============================
 def load_data():
     try:
@@ -55,14 +46,13 @@ def get_day():
     return ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][datetime.now().weekday()]
 
 # ==============================
-# 📌 주차 (일요일 기준)
+# 주차 계산 (일요일 기준)
 # ==============================
 def get_week_key():
     now = datetime.now()
     year, month = now.year, now.month
 
     first_day = datetime(year, month, 1)
-
     first_sunday = first_day
     while first_sunday.weekday() != 6:
         first_sunday += timedelta(days=1)
@@ -76,16 +66,38 @@ def get_week_key():
     return f"{year}-{month:02d} {week}주"
 
 # ==============================
-# 📌 유저 등록
+# 시작 / 버튼 UI
+# ==============================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [["온라인 입력", "대면 입력"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("입력 버튼입니다", reply_markup=reply_markup)
+
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "온라인 입력":
+        await update.message.reply_text("온라인 입력입니다\n예시: o 10/2/1/0")
+
+    elif text == "대면 입력":
+        await update.message.reply_text("대면 입력입니다\n예시: f 10/2/1/0")
+
+# ==============================
+# 유저 등록 (UX 개선)
 # ==============================
 async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
 
     try:
-        team, name = context.args[0], context.args[1]
+        team = context.args[0]
+        name = context.args[1]
     except:
-        await update.message.reply_text("/register 1 홍길동")
-        return
+        try:
+            team = context.args[0]
+            name = update.message.from_user.first_name
+        except:
+            await update.message.reply_text("/register 1 홍길동")
+            return
 
     uid = str(update.message.from_user.id)
 
@@ -97,10 +109,11 @@ async def register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["names"][uid] = name
 
     save_data(data)
-    await update.message.reply_text("등록 완료")
+
+    await update.message.reply_text(f"✅ 등록 완료\n조: {team}\n이름: {name}")
 
 # ==============================
-# 📌 기록 입력
+# 기록 입력 (UX 개선 핵심)
 # ==============================
 async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
@@ -108,23 +121,18 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.message.from_user.id)
     data = load_data()
 
+    # ❗ 등록 안된 경우
     if uid not in data.get("users", {}):
-        await update.message.reply_text("/register 먼저")
+        await update.message.reply_text("먼저 /register 조 이름 입력해주세요")
         return
 
     try:
         mode, val = update.message.text.split(" ",1)
         values = list(map(int, val.split("/")))
+        if len(values) != 4:
+            raise Exception
     except:
-        await update.message.reply_text("o 1/0/0/2 또는 f 1/0/0/2")
-        return
-
-    if mode not in ["o","f"]:
-        await update.message.reply_text("o 또는 f")
-        return
-
-    if any(v<0 or v>100 for v in values):
-        await update.message.reply_text("0~100만")
+        await update.message.reply_text("o 10/2/1/0 형식으로 입력해주세요")
         return
 
     cats = ["말하기","쓰기","읽기","강의"]
@@ -138,31 +146,12 @@ async def record(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["records"][uid][day][key] = dict(zip(cats,values))
 
     save_data(data)
-    await update.message.reply_text("기록 완료")
+
+    label = "온라인" if mode=="o" else "대면"
+    await update.message.reply_text(f"✅ 저장 완료 ({label})")
 
 # ==============================
-# 📌 개인 조회
-# ==============================
-async def my_record(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_allowed(update): return
-
-    uid = str(update.message.from_user.id)
-    data = load_data()
-
-    name = data.get("names",{}).get(uid,"")
-    r = data.get("records",{}).get(uid,{}).get(get_day(),{})
-
-    msg = f"{name} 오늘 기록\n"
-
-    for typ in ["online","offline"]:
-        if typ in r:
-            v = r[typ]
-            msg += f"{'온라인' if typ=='online' else '대면'} {v['말하기']}/{v['쓰기']}/{v['읽기']}/{v['강의']}\n"
-
-    await update.message.reply_text(msg)
-
-# ==============================
-# 📌 조장 팀 조회 (조장만)
+# 조장 조회
 # ==============================
 async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in LEADER_IDS:
@@ -173,37 +162,31 @@ async def team_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
 
     my_team = data.get("users", {}).get(uid)
-    if not my_team:
-        return
-
     msg = f"{my_team}조\n\n"
-
-    total = {"말하기":0,"쓰기":0,"읽기":0,"강의":0}
 
     for user_id, team in data.get("users", {}).items():
         if team != my_team:
             continue
 
-        name = data["names"].get(user_id,"")
-        recs = data.get("records",{}).get(user_id,{}).get(get_day(),{})
+        name = data["names"][user_id]
+        rec = data.get("records", {}).get(user_id, {}).get(get_day(), {})
 
-        person = {"말하기":0,"쓰기":0,"읽기":0,"강의":0}
+        msg += f"{name}\n"
 
-        for typ in ["online","offline"]:
-            if typ in recs:
-                for k in person:
-                    person[k] += recs[typ].get(k,0)
+        if "online" in rec:
+            o = rec["online"]
+            msg += f"O {o['말하기']}/{o['쓰기']}/{o['읽기']}/{o['강의']}\n"
 
-        msg += f"{name} {person['말하기']}/{person['쓰기']}/{person['읽기']}/{person['강의']}\n"
+        if "offline" in rec:
+            f = rec["offline"]
+            msg += f"F {f['말하기']}/{f['쓰기']}/{f['읽기']}/{f['강의']}\n"
 
-        for k in total:
-            total[k] += person[k]
+        msg += "\n"
 
-    msg += f"\n합계 {total['말하기']}/{total['쓰기']}/{total['읽기']}/{total['강의']}"
     await update.message.reply_text(msg)
 
 # ==============================
-# 📌 관리자 전체 조회
+# 관리자 전체 조회
 # ==============================
 async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS:
@@ -211,83 +194,81 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update): return
 
     data = load_data()
-
     teams = {}
-    grand = {"말하기":0,"쓰기":0,"읽기":0,"강의":0}
 
     for uid, team in data.get("users", {}).items():
-        name = data["names"].get(uid,"")
-        recs = data.get("records",{}).get(uid,{}).get(get_day(),{})
-
-        person = {"말하기":0,"쓰기":0,"읽기":0,"강의":0}
-
-        for typ in ["online","offline"]:
-            if typ in recs:
-                for k in person:
-                    person[k] += recs[typ].get(k,0)
-
-        teams.setdefault(team, []).append((name, person))
+        name = data["names"][uid]
+        rec = data.get("records", {}).get(uid, {}).get(get_day(), {})
+        teams.setdefault(team, []).append((name, rec))
 
     msg = ""
 
     for team in sorted(teams):
         msg += f"{team}조\n"
-        team_total = {"말하기":0,"쓰기":0,"읽기":0,"강의":0}
 
-        for name, r in teams[team]:
-            msg += f"{name} {r['말하기']}/{r['쓰기']}/{r['읽기']}/{r['강의']}\n"
-            for k in team_total:
-                team_total[k] += r[k]
+        for name, rec in teams[team]:
+            msg += f"{name}\n"
 
-        msg += f"합계 {team_total['말하기']}/{team_total['쓰기']}/{team_total['읽기']}/{team_total['강의']}\n\n"
+            if "online" in rec:
+                o = rec["online"]
+                msg += f"O {o['말하기']}/{o['쓰기']}/{o['읽기']}/{o['강의']}\n"
 
-        for k in grand:
-            grand[k] += team_total[k]
+            if "offline" in rec:
+                f = rec["offline"]
+                msg += f"F {f['말하기']}/{f['쓰기']}/{f['읽기']}/{f['강의']}\n"
 
-    msg += f"전체합계 {grand['말하기']}/{grand['쓰기']}/{grand['읽기']}/{grand['강의']}"
+            msg += "\n"
+
+        msg += "\n"
+
     await update.message.reply_text(msg)
 
 # ==============================
-# 📊 주간 그래프 (누적)
+# 📊 주간 표 엑셀
 # ==============================
-def save_weekly_summary():
+def create_weekly_table_excel():
     data = load_data()
-    key = get_week_key()
+    days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 
-    total=online=offline=0
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["조","이름"] + days)
 
-    for uid,recs in data.get("records",{}).items():
-        for day,val in recs.items():
-            for typ in ["online","offline"]:
-                if typ in val:
-                    for k in ["말하기","쓰기","읽기","강의"]:
-                        total+=val[typ][k]
-                        if typ=="online": online+=val[typ][k]
-                        else: offline+=val[typ][k]
+    for uid, team in data.get("users", {}).items():
+        name = data["names"][uid]
+        recs = data.get("records", {}).get(uid, {})
 
-    data.setdefault("weekly_stats",{})
-    data["weekly_stats"][key] = {
-        "total": total,
-        "online": online,
-        "offline": offline
-    }
+        row = [team, name]
 
-    save_data(data)
+        for d in days:
+            r = recs.get(d)
+            if r:
+                parts=[]
+                for typ in ["online","offline"]:
+                    if typ in r:
+                        v=r[typ]
+                        parts.append(f"{'O' if typ=='online' else 'F'} {v['말하기']}/{v['쓰기']}/{v['읽기']}/{v['강의']}")
+                row.append("\n".join(parts))
+            else:
+                row.append("-")
 
-async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id not in ADMIN_IDS:
-        return
-    if not is_allowed(update): return
+        ws.append(row)
 
-    save_weekly_summary()
+    file="weekly_table.xlsx"
+    wb.save(file)
+    return file
+
+# ==============================
+# 📈 그래프 엑셀
+# ==============================
+def create_weekly_chart_excel():
     data = load_data()
 
     wb = Workbook()
     ws = wb.active
-
     ws.append(["주차","총합","온라인","대면"])
 
-    weekly = data.get("weekly_stats",{})
+    weekly = data.get("weekly_stats", {})
     for w in sorted(weekly):
         ws.append([w, weekly[w]["total"], weekly[w]["online"], weekly[w]["offline"]])
 
@@ -297,28 +278,85 @@ async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chart.add_data(data_ref, titles_from_data=True)
     chart.set_categories(cats)
+    ws.add_chart(chart, "E2")
 
-    ws.add_chart(chart,"E2")
-
-    file="chart.xlsx"
+    file="weekly_chart.xlsx"
     wb.save(file)
+    return file
 
-    with open(file,"rb") as f:
-        await update.message.reply_document(f)
+# ==============================
+# 주간 요약 저장
+# ==============================
+def save_weekly_summary():
+    data=load_data()
+    key=get_week_key()
 
+    total=online=offline=0
+    for uid,recs in data.get("records",{}).items():
+        for d,val in recs.items():
+            for typ in ["online","offline"]:
+                if typ in val:
+                    for k in ["말하기","쓰기","읽기","강의"]:
+                        total+=val[typ][k]
+                        if typ=="online": online+=val[typ][k]
+                        else: offline+=val[typ][k]
+
+    data.setdefault("weekly_stats",{})
+    data["weekly_stats"][key]={"total":total,"online":online,"offline":offline}
+    save_data(data)
+
+# ==============================
+# 자동 리포트
+# ==============================
+async def send_weekly_report(app):
+    save_weekly_summary()
+
+    table_file = create_weekly_table_excel()
+    chart_file = create_weekly_chart_excel()
+
+    for admin_id in ADMIN_IDS:
+        await app.bot.send_message(admin_id, "📊 주간 리포트")
+        await app.bot.send_document(admin_id, open(table_file,"rb"))
+        await app.bot.send_document(admin_id, open(chart_file,"rb"))
+
+    os.remove(table_file)
+    os.remove(chart_file)
+
+# ==============================
+# 수동 그래프
+# ==============================
+async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id not in ADMIN_IDS: return
+    file=create_weekly_chart_excel()
+    await update.message.reply_document(open(file,"rb"))
     os.remove(file)
 
 # ==============================
-# 🚀 실행
+# 스케줄러
+# ==============================
+scheduler = AsyncIOScheduler()
+
+scheduler.add_job(
+    lambda: app.create_task(send_weekly_report(app)),
+    "cron",
+    day_of_week="sun",
+    hour=23
+)
+
+scheduler.start()
+
+# ==============================
+# 실행
 # ==============================
 app = ApplicationBuilder().token(TOKEN).build()
 
+app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("register", register))
-app.add_handler(CommandHandler("myrecord", my_record))
-app.add_handler(CommandHandler("teamstats", team_stats))  # 조장용
-app.add_handler(CommandHandler("allview", all_view))      # 관리자용
+app.add_handler(CommandHandler("teamstats", team_stats))
+app.add_handler(CommandHandler("allview", all_view))
 app.add_handler(CommandHandler("weeklychart", weekly_chart))
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
+app.add_handler(MessageHandler(filters.TEXT, handle_button))
 
 app.run_polling()
