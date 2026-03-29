@@ -1,5 +1,5 @@
 # ==============================
-# 📌 Telegram Study Bot (완전체 + UX + 안전 스케줄러)
+# 📌 Telegram Study Bot (완전체 + 안전 스케줄러)
 # ==============================
 
 import json, os, asyncio
@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -23,7 +22,7 @@ ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
 DATA_FILE = "data.json"
 
 # ==============================
-# 기본 데이터 함수
+# 데이터 함수
 # ==============================
 def load_data():
     try:
@@ -283,9 +282,8 @@ if __name__=="__main__":
 
     # 스케줄러
     scheduler = AsyncIOScheduler()
-    scheduler.configure(event_loop=app.bot.loop)  # 기존 루프 연결
     scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)), "cron", day_of_week="sun", hour=23)
     scheduler.start()
 
-    # 봇 실행
+    # 봇 실행 (PTB v20+ 권장 방식)
     app.run_polling()
