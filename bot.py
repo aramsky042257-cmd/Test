@@ -22,7 +22,7 @@ ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID"))
 DATA_FILE = "data.json"
 
 # ==============================
-# 데이터 함수
+# 기본 데이터 함수
 # ==============================
 def load_data():
     try:
@@ -174,7 +174,7 @@ async def all_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg)
 
 # ==============================
-# 주간 엑셀 테이블
+# 엑셀 관련 함수
 # ==============================
 def create_weekly_table_excel():
     data = load_data()
@@ -202,9 +202,6 @@ def create_weekly_table_excel():
     wb.save(file)
     return file
 
-# ==============================
-# 주간 그래프
-# ==============================
 def create_weekly_chart_excel():
     data = load_data()
     wb = Workbook()
@@ -223,9 +220,6 @@ def create_weekly_chart_excel():
     wb.save(file)
     return file
 
-# ==============================
-# 주간 요약
-# ==============================
 def save_weekly_summary():
     data = load_data()
     key = get_week_key()
@@ -243,7 +237,7 @@ def save_weekly_summary():
     save_data(data)
 
 # ==============================
-# 자동 리포트
+# 리포트
 # ==============================
 async def send_weekly_report(app):
     save_weekly_summary()
@@ -256,14 +250,20 @@ async def send_weekly_report(app):
     os.remove(table_file)
     os.remove(chart_file)
 
-# ==============================
-# 수동 그래프
-# ==============================
 async def weekly_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id not in ADMIN_IDS: return
     file = create_weekly_chart_excel()
     await update.message.reply_document(open(file,"rb"))
     os.remove(file)
+
+# ==============================
+# 스케줄러 시작 함수
+# ==============================
+scheduler = AsyncIOScheduler()
+
+async def start_scheduler(app):
+    scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)), "cron", day_of_week="sun", hour=23)
+    scheduler.start()
 
 # ==============================
 # 메인 실행
@@ -280,10 +280,5 @@ if __name__=="__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
     app.add_handler(MessageHandler(filters.TEXT, handle_button))
 
-    # 스케줄러
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(lambda: asyncio.create_task(send_weekly_report(app)), "cron", day_of_week="sun", hour=23)
-    scheduler.start()
-
-    # 봇 실행 (PTB v20+ 권장 방식)
-    app.run_polling()
+    # run_polling() 실행 + 루프 시작 후 scheduler 시작
+    app.run_polling(post_init=start_scheduler)
